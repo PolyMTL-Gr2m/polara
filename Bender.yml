@@ -1,0 +1,15 @@
+package:        
+    name: polara
+    authors:
+        - "Yoan Fournier <yoan.fournier@polymtl.ca>"
+
+dependencies:
+    ara:                { git: "https://github.com/PolyMTL-Gr2m/ara",                   rev: main       } 
+    apb_uart:           { git: "https://github.com/pulp-platform/apb_uart",             version: 0.1.0  }
+
+workspace:
+    checkout_dir: "hardware/deps"
+    
+sources:
+    files:
+        - hardware/src/polara_soc.sv
