@@ -5,14 +5,17 @@
 // Author: Yoan Fournier <yoan.fournier@polymtl.ca>
 // Description:
 // Polara ASIC SoC, containing :
-//      - ara_system
+//      - ARA System
+//          - ARA (4 Lanes)
+//          - CVA6
 //      - L2
 //      - Scan Chain
 //      - JTAG + Debug
+//      - Boot ROM
 //      - FLL (blackbox)    
 //      - UART
 
-module polara_soc import axi_pkg::*; import ara_pkg::*; #(
+module polara_soc import axi_pkg::*; import ara_pkg::*; import polara_pkg::*; #(
     // RVV Parameters
     parameter  int           unsigned NrLanes      = 0, // Number of parallel vector lanes.
     // Support for floating-point data types
@@ -23,7 +26,8 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
     parameter  int           unsigned AxiUserWidth = 1,
     parameter  int           unsigned AxiIdWidth   = 5,
     // Main memory
-    parameter  int           unsigned L2NumWords   = 2**20,
+    parameter  int           unsigned L2NumWords   = 2**17, // 2 MB : 2**17 * 128 / 8 = 2097152 B
+    parameter  int           unsigned NrL2Banks    = 8,
     // Dependant parameters. DO NOT CHANGE!
     localparam type                   axi_data_t   = logic [AxiDataWidth-1:0],
     localparam type                   axi_strb_t   = logic [AxiDataWidth/8-1:0],
@@ -38,10 +42,12 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
     input  logic rst_ni,
 
     // SCAN
-    input  logic testmode_i,
     input  logic scan_en_i,
     input  logic scan_i,
     output logic scan_o,
+
+    // Testmode
+    input  logic testmode_i,
 
     // JTAG + Debug
     input  logic tck_i,
@@ -53,15 +59,17 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
     // UART
     input  logic rx_i,
     output logic tx_o
+
+    // Test Probes
 );
 
     `include "axi/assign.svh"
     `include "axi/typedef.svh"
     `include "common_cells/registers.svh"
 
-    //////////////////////
-    //  Memory Regions  //
-    //////////////////////
+//////////////////////
+//  Memory Regions  //
+//////////////////////
 
     localparam NrAXIMasters = 1; // Actually masters, but slaves on the crossbar
 
@@ -84,9 +92,9 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
         CTRLBase = 64'hD000_0000
     } soc_bus_start_e;
 
-    ///////////
-    //  AXI  //
-    ///////////
+///////////
+//  AXI  //
+///////////
 
     // Ariane's AXI port data width
     localparam AxiNarrowDataWidth = 64;
@@ -123,9 +131,9 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
     soc_narrow_req_t  [NrAXISlaves-1:0] periph_narrow_axi_req;
     soc_narrow_resp_t [NrAXISlaves-1:0] periph_narrow_axi_resp;
 
-    ////////////////
-    //  Crossbar  //
-    ////////////////
+////////////////
+//  Crossbar  //
+////////////////
 
     localparam axi_pkg::xbar_cfg_t XBarCfg = '{
         NoSlvPorts        : NrAXIMasters,
@@ -178,9 +186,9 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
         .default_mst_port_i   ('0                  )
     );
 
-    //////////
-    //  L2  //
-    //////////
+//////////
+//  L2  //
+//////////
 
     // The L2 memory does not support atomics
     soc_wide_req_t  l2mem_wide_axi_req_wo_atomics;
@@ -231,27 +239,43 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
         .busy_o      (/* Unused */                  )
     );
 
-    tc_sram #(
-        .NumWords (L2NumWords  ),
-        .NumPorts (1           ),
-        .DataWidth(AxiDataWidth)
-    ) i_dram (
-        .clk_i  (clk_i                                                                      ),
-        .rst_ni (rst_ni                                                                     ),
-        .req_i  (l2_req                                                                     ),
-        .we_i   (l2_we                                                                      ),
-        .addr_i (l2_addr[$clog2(L2NumWords)-1+$clog2(AxiDataWidth/8):$clog2(AxiDataWidth/8)]),
-        .wdata_i(l2_wdata                                                                   ),
-        .be_i   (l2_be                                                                      ),
-        .rdata_o(l2_rdata                                                                   )
-    );
+    // Number of words per bank
+    localparam integer unsigned L2BankNumWords = L2NumWords/NrL2Banks;
+
+    // L2 Bank selection
+    logic [$clog2(NrL2Banks)-1:0] l2_sel_d, l2_sel_q;
+    assign l2_sel_d = l2_addr[$clog2(AxiDataWidth/8) +: $clog2(NrL2Banks)];
+    `FF(l2_sel_q, l2_sel_d, '0)
+
+    // Read data selection
+    logic [NrL2Banks-1:0][AxiDataWidth-1:0] l2_bank_rdata;
+    assign l2_rdata = l2_bank_rdata[l2_sel_q];
+
+
+    for (genvar b = 0; b < NrL2Banks; b++) begin : gen_l2_macro
+        tc_sram #(
+            .NumWords (L2BankNumWords),
+            .NumPorts (1             ),
+            .DataWidth(AxiDataWidth  )
+        ) i_dram (
+            .clk_i  (clk_i                                                                        ),
+            .rst_ni (rst_ni                                                                       ),
+            .req_i  (l2_req                                                                       ),
+            .we_i   (l2_we                                                                        ),
+            .addr_i (l2_addr[$clog2(AxiDataWidth/8) + $clog2(NrL2Banks) +: $clog2(L2BankNumWords)]),
+            .wdata_i(l2_wdata                                                                     ),
+            .be_i   (l2_be                                                                        ),
+            .rdata_o(l2_rdata[b]                                                                  )
+        );
+
+    end
 
     // One-cycle latency
     `FF(l2_rvalid, l2_req, 1'b0);
 
-    ////////////
-    //  UART  //
-    ////////////
+////////////
+//  UART  //
+////////////
 
     // UART signals
     logic        uart_pneable;
@@ -378,14 +402,109 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
         .SOUT    ( tx_o            )
     );
 
-    ////////////////////
-    //  JTAG + Debug  //
-    ////////////////////
+///////////////////////////
+//  JTAG + Debug Module  //
+///////////////////////////
 
+    import dm::hartinfo_t;
+    import dm::dmi_req_t;
+    import dm::dmi_resp_t;
 
-    /////////////////////////
-    //  Control registers  //
-    /////////////////////////
+    // Debug parameters
+    localparam logic [15:0]     PartNumber = 1;
+    localparam logic [31:0]     IDCODE     = (dm::DbgVersion013 << 28) | (PartNumber << 12) | 32'b1;
+    localparam                  NrHarts    = 1;
+    hartinfo_t                  hartinfo;
+
+    assign hartinfo = '{
+        zero1:      0, 
+        nscratch:   0, 
+        zero0:      0, 
+        dataaccess: 0, 
+        datasize:   0, 
+        dataaddr:   0
+    };
+
+    // Debug Module interface (DMI)
+    logic                       debug_req_ready;
+    dmi_resp_t                  debug_resp;
+    logic                       jtag_req_valid;
+    dmi_req_t                   jtag_dmi_req;
+    logic                       jtag_resp_ready;
+    logic                       jtag_resp_valid;
+    logic         [NrHarts-1:0] dm_debug_req;
+    logic                       ndmreset;
+    logic                       dmi_rst_no;
+
+    // System Bus Acces (SBA)
+    logic           sb_req;
+    logic [31:0]    sb_addr;
+    logic           sb_we;
+    logic [31:0]    sb_wdata;
+    logic [3:0]     sb_be;
+    logic           sb_gnt;
+    logic           sb_rvalid;
+    logic [31:0]    sb_rdata;
+
+    dmi_jtag #(
+        .IdcodeValue (IDCODE)
+    ) i_jtag (
+        .clk_i           (clk_i           ),
+        .rst_ni          (rst_ni          ),
+        .testmode_i      (testmode_i      ),
+        .dmi_rst_no      (dmi_rst_no      ),
+        .dmi_req_o       (jtag_dmi_req    ),
+        .dmi_req_valid_o (jtag_req_valid  ),
+        .dmi_req_ready_i (jtag_resp_ready ),
+        .dmi_resp_i      (debug_resp      ),
+        .dmi_resp_ready_o(jtag_resp_ready ),
+        .dmi_resp_valid_i(jtag_resp_valid ),
+        .tck_i           (tck_i           ), // TODO: Clock ?? same as system
+        .tms_i           (tms_i           ),
+        .trst_ni         (trst_ni         ),
+        .td_i            (td_i            ),
+        .td_o            (td_o            ),
+        .tdo_oe_o        (/* Unused */    )
+    );  
+
+    dm_top #(
+        .NrHarts  (NrHarts),
+        .BusWidth (32     )
+    ) i_dm_top (
+        .clk_i           (clk_i           ),
+        .rst_ni          (rst_ni          ),
+        .testmode_i      (testmode_i      ),
+        .ndmreset_o      (ndmreset        ), // TODO: Access to CVA6 IRQ through ARA system ?
+        .dmactive_o      (/* Unused */    ),
+        .debug_req_o     (                ),
+        .unavailable_i   ('1              ),
+        .hartinfo_i      (hartinfo        ),
+        .slave_req_i     ('0              ),
+        .slave_we_i      ('0              ),
+        .slave_addr_i    ('0              ),
+        .slave_be_i      ('0              ),
+        .slave_wdata_i   ('0              ),
+        .slave_rdata_o   (/* Unused */    ),
+        .master_req_o    (sb_req          ),
+        .master_add_o    (sb_addr         ),
+        .master_we_o     (sb_we           ),
+        .master_wdata_o  (sb_wdata        ),
+        .master_be_o     (sb_be           ),
+        .master_gnt_i    (master_gnt_i    ),
+        .master_r_valid_i(sb_rvalid       ),
+        .master_r_rdata_i(sb_rdata        ),
+        .dmi_rst_ni      (dmi_rst_no      ),
+        .dmi_req_valid_i (jtag_req_valid  ),
+        .dmi_req_ready_o (debug_req_ready ),
+        .dmi_req_i       (jtag_dmi_req    ),
+        .dmi_resp_valid_o(jtag_resp_valid ),
+        .dmi_resp_ready_i(jtag_resp_ready ),
+        .dmi_resp_o      (debug_resp      )
+    );
+
+/////////////////////////
+//  Control registers  //
+/////////////////////////
 
     soc_narrow_lite_req_t  axi_lite_ctrl_registers_req;
     soc_narrow_lite_resp_t axi_lite_ctrl_registers_resp;
@@ -455,9 +574,9 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; #(
         .mst_resp_i(periph_narrow_axi_resp[CTRL])
     );
 
-    //////////////
-    //  System  //
-    //////////////
+//////////////
+//  System  //
+//////////////
 
     localparam ariane_pkg::ariane_cfg_t ArianeAraConfig = '{
         RASDepth             : 2,

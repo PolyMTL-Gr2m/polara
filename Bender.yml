@@ -13,3 +13,4 @@ workspace:
 sources:
     files:
         - hardware/src/polara_soc.sv
+        - hardware/include/polara_pkg.sv
