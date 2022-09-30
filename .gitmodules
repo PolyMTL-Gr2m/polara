@@ -1,6 +1,6 @@
-[submodule "hardware/deps/apb_uart"]
-	path = hardware/deps/apb_uart
-	url = https://github.com/pulp-platform/apb_uart
 [submodule "hardware/deps/ara"]
 	path = hardware/deps/ara
 	url = https://github.com/PolyMTL-Gr2m/ara
+[submodule "hardware/deps/apb_uart"]
+	path = hardware/deps/apb_uart
+	url = https://github.com/pulp-platform/apb_uart
