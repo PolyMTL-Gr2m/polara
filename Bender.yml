@@ -6,11 +6,13 @@ package:
 dependencies:
     ara:                { git: "https://github.com/PolyMTL-Gr2m/ara",                   rev: main       } 
     apb_uart:           { git: "https://github.com/pulp-platform/apb_uart",             version: 0.1.0  }
-
+    axi:                { git: "https://github.com/pulp-platform/axi.git",              version: 0.29.1 }
+    common_cells:       { git: "https://github.com/pulp-platform/common_cells.git",     version: 1.22.1 }
+ 
 export_include_dirs:
     - hardware/include
     
 sources:
     files:
-        - hardware/src/polara_soc.sv
         - hardware/include/polara_pkg.sv
+        - hardware/src/polara_soc.sv

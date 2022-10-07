@@ -26,7 +26,7 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; import polara_pkg::*; #(
     parameter  int           unsigned AxiUserWidth = 1,
     parameter  int           unsigned AxiIdWidth   = 5,
     // Main memory
-    parameter  int           unsigned L2NumWords   = 2**17, // 2 MB : 2**17 * 128 / 8 = 2097152 B
+    parameter  int           unsigned L2NumWords   = 2**13, // 128 KB : 2**13 * 128 / 8 = 131072 B
     parameter  int           unsigned NrL2Banks    = 8,
     // Dependant parameters. DO NOT CHANGE!
     localparam type                   axi_data_t   = logic [AxiDataWidth-1:0],
@@ -265,9 +265,8 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; import polara_pkg::*; #(
             .addr_i (l2_addr[$clog2(AxiDataWidth/8) + $clog2(NrL2Banks) +: $clog2(L2BankNumWords)]),
             .wdata_i(l2_wdata                                                                     ),
             .be_i   (l2_be                                                                        ),
-            .rdata_o(l2_rdata[b]                                                                  )
+            .rdata_o(l2_bank_rdata[b]                                                             )
         );
-
     end
 
     // One-cycle latency
@@ -459,7 +458,7 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; import polara_pkg::*; #(
         .dmi_resp_i      (debug_resp      ),
         .dmi_resp_ready_o(jtag_resp_ready ),
         .dmi_resp_valid_i(jtag_resp_valid ),
-        .tck_i           (tck_i           ), // TODO: Clock ?? same as system
+        .tck_i           (tck_i           ),
         .tms_i           (tms_i           ),
         .trst_ni         (trst_ni         ),
         .td_i            (td_i            ),
@@ -505,6 +504,7 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; import polara_pkg::*; #(
 /////////////////////////
 //  Control registers  //
 /////////////////////////
+    logic                      [63:0] exit;
 
     soc_narrow_lite_req_t  axi_lite_ctrl_registers_req;
     soc_narrow_lite_resp_t axi_lite_ctrl_registers_resp;
@@ -545,7 +545,7 @@ module polara_soc import axi_pkg::*; import ara_pkg::*; import polara_pkg::*; #(
         .axi_lite_slave_resp_o(axi_lite_ctrl_registers_resp),
         .dram_base_addr_o     (/* Unused */                ),
         .dram_end_addr_o      (/* Unused */                ),
-        .exit_o               (exit_o                      )
+        .exit_o               (exit                        )
     );
 
     axi_dw_converter #(
